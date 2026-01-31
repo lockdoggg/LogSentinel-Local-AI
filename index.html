@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>QS Enterprise | Offline Admin</title>
+    <style>
+        :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #c9d1d9; --blue: #58a6ff; --green: #238636; --red: #da3633; --yellow: #d29922; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; height: 100vh; overflow: hidden; }
+        * { box-sizing: border-box; }
+        .sidebar { width: 260px; background: var(--card); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px; }
+        .main { flex: 1; padding: 30px; overflow-y: auto; position: relative; }
+        h3, h4 { margin-top: 0; color: var(--blue); }
+        .card { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin-bottom: 20px; }
+        input, select, textarea { width: 100%; background: #010409; border: 1px solid var(--border); color: #fff; padding: 10px; border-radius: 6px; margin-bottom: 10px; font-size: 14px; }
+        input:focus { outline: 2px solid var(--blue); border-color: transparent; }
+        button { cursor: pointer; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); font-weight: 600; background: #21262d; color: var(--text); transition: 0.2s; }
+        button:hover { background: #30363d; }
+        .btn-primary { background: var(--green); color: #fff; border: none; width: 100%; }
+        .btn-primary:hover { background: #2ea043; }
+        .btn-danger { background: var(--red); color: #fff; border: none; }
+        .btn-danger:hover { background: #b62324; }
+        .btn-warning { background: var(--yellow); color: #000; border: none; }
+        .btn-warning:hover { background: #dbab37; }
+        .btn-secondary { background: #30363d; color: #fff; border: 1px solid var(--border); }
+        .btn-secondary:hover { background: #484f58; }
+        .btn-sm { padding: 4px 8px; font-size: 12px; width: auto; }
+        .nav-link { display: block; padding: 10px; color: #8b949e; cursor: pointer; text-decoration: none; border-radius: 6px; margin-bottom: 5px; }
+        .nav-link:hover { background: rgba(177,186,196,0.12); color: var(--text); }
+        .nav-link.active { background: #1f6feb; color: #fff; }
+        .tabs { display: flex; gap: 10px; border-bottom: 1px solid var(--border); margin-bottom: 15px; }
+        .tab-btn { background: none; border: none; border-bottom: 2px solid transparent; color: #8b949e; border-radius: 0; }
+        .tab-btn.active { color: var(--blue); border-bottom-color: var(--blue); }
+        .overlay { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.85); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-box { background: var(--card); width: 800px; padding: 25px; border-radius: 8px; border: 1px solid var(--border); box-shadow: 0 0 20px rgba(0,0,0,0.5); display: flex; flex-direction: column; max-height: 90vh; }
+        .modal-force { width: 500px; border: 1px solid var(--red); box-shadow: 0 0 30px rgba(218, 54, 51, 0.3); }
+        .log-view { font-family: monospace; white-space: pre-wrap; line-height: 1.5; color: #e6edf3; }
+        .log-view h2 { font-size: 1.2em; color: var(--blue); border-bottom: 1px solid var(--border); padding-bottom: 5px; margin-top: 15px; }
+        .log-view code { background: rgba(110,118,129,0.4); padding: 2px 5px; border-radius: 4px; }
+        .log-view pre { background: #0d1117; padding: 10px; border-radius: 6px; border: 1px solid var(--border); overflow-x: auto; }
+        .hidden { display: none !important; }
+        .badge { background: #1f6feb; padding: 2px 8px; border-radius: 12px; font-size: 0.75em; margin-left: 10px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 10px; border-bottom: 1px solid var(--border); }
+    </style>
+</head>
+<body>
+
+<div id="loginOverlay" class="overlay" style="display: flex; z-index: 9999;">
+    <div class="modal-box" style="width: 350px; text-align: center;">
+        <h3 style="margin-bottom: 20px;">&#128274; Q-S LOGIN</h3>
+        <input id="loginUser" placeholder="Username">
+        <input type="password" id="loginPass" placeholder="Password">
+        <button onclick="login()" class="btn-primary" style="margin-top: 10px;">LOGIN</button>
+        <div id="loginError" style="color: var(--red); margin-top: 15px; font-size: 0.9em;"></div>
+    </div>
+</div>
+
+<div id="forceChangeOverlay" class="overlay" style="z-index: 10000;">
+    <div class="modal-box modal-force">
+        <h3 style="color: var(--red); text-align: center;">&#9888; PASSWORD CHANGE</h3>
+        <p style="text-align: center; color: #8b949e; margin-bottom: 20px;">Administrator requires a password change.</p>
+        <input type="password" id="fcOld" placeholder="Current (temporary) password">
+        <input type="password" id="fcNew" placeholder="New password (min 8 chars + digit)">
+        <button onclick="forceChangePwd()" class="btn-danger" style="margin-top: 10px;">UPDATE AND LOGIN</button>
+    </div>
+</div>
+
+<div id="changePwdModal" class="overlay">
+    <div class="modal-box" style="width: 400px;">
+        <h3>&#128273; Change Password</h3>
+        <input type="password" id="usrOldPass" placeholder="Old password">
+        <input type="password" id="usrNewPass" placeholder="New password">
+        <div style="display: flex; gap: 10px; margin-top: 15px;">
+            <button onclick="closeModal('changePwdModal')" style="flex:1">Cancel</button>
+            <button onclick="userChangePwd()" class="btn-primary" style="flex:1">Save</button>
+        </div>
+    </div>
+</div>
+
+<div id="reportModal" class="overlay">
+    <div class="modal-box" style="height: 80vh;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+            <h4 id="modTitle" style="margin:0">Report</h4>
+            <button onclick="closeModal('reportModal')" class="btn-sm">&#10006;</button>
+        </div>
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchSubTab(this, 'mod-sol')">Solution</button>
+            <button class="tab-btn" onclick="switchSubTab(this, 'mod-ctx')">Log Context</button>
+        </div>
+        <div id="mod-sol" class="log-view" style="overflow-y:auto; flex:1"></div>
+        <div id="mod-ctx" class="log-view hidden" style="overflow-y:auto; flex:1; font-size:0.85em; opacity:0.8"></div>
+    </div>
+</div>
+
+<div class="sidebar">
+    <h4 style="padding-left:10px">DISCLAIMER! <span style="color:#8b949e; font-size:0.6em">WARNING! VERIFY COMMANDS BEFORE EXECUTION! YOU ARE SOLELY RESPONSIBLE FOR ALL ACTIONS!</span></h4>
+    <nav style="flex:1">
+        <a class="nav-link active" onclick="nav('analyze', this)">&#128202; Analyze</a>
+        <a class="nav-link" onclick="nav('archive', this)">&#128452; Archive</a>
+        <a class="nav-link" onclick="nav('scripts', this)">&#128220; Scripts</a>
+        <div id="admin-links" class="hidden">
+            <hr style="border-color:var(--border)">
+            <a class="nav-link" onclick="nav('monitor', this)">&#128200; Statistics</a>
+            <a class="nav-link" onclick="nav('users', this)">&#128101; Users</a>
+        </div>
+    </nav>
+    <div style="border-top:1px solid var(--border); padding-top:15px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+            <strong id="displayUser">User</strong>
+            <button class="btn-sm" onclick="openModal('changePwdModal')">&#128273;</button>
+        </div>
+        <button onclick="logout()" style="width:100%; color:var(--red); border-color:var(--border)">Logout</button>
+    </div>
+</div>
+
+<div class="main">
+    <div id="tab-analyze">
+        <div class="card">
+            <div class="tabs">
+                <button class="tab-btn active" onclick="setMode('file', this)">&#128193; File Upload</button>
+                <button class="tab-btn" onclick="setMode('text', this)">&#128221; Manual Input</button>
+            </div>
+            <div id="area-file">
+                <input type="file" id="logInput" multiple style="padding: 20px; border: 2px dashed var(--border);">
+            </div>
+            <div id="area-text" class="hidden">
+                <textarea id="manualLogInput" rows="8" placeholder="Paste log text here..."></textarea>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top:15px;">
+                <button onclick="runAnalysis()" class="btn-primary" style="flex: 2;">START ANALYSIS (AI)</button>
+                <button onclick="clearAnalyze()" class="btn-secondary" style="flex: 1;">&#129529; Clear</button>
+            </div>
+        </div>
+        <div id="resultsArea"></div>
+    </div>
+
+    <div id="tab-archive" class="hidden">
+        <div style="display:flex; justify-content:space-between; margin-bottom:15px">
+            <h3>Report Archive</h3>
+            <button onclick="fetchArchive()">&#128260; Refresh</button>
+        </div>
+        <div id="archiveList"></div>
+    </div>
+
+    <div id="tab-scripts" class="hidden">
+        <h3>Script Generator</h3>
+        <div class="card">
+            <input id="scriptTask" placeholder="Describe the task (e.g., 'PostgreSQL backup script at 3 AM')">
+            <select id="scriptLang">
+                <option value="bash">Bash / Shell</option>
+                <option value="sql">SQL Query</option>
+                <option value="python">Python 3</option>
+            </select>
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <button onclick="genScript()" class="btn-primary" style="flex: 2;">Generate</button>
+                <button onclick="clearScript()" class="btn-secondary" style="flex: 1;">&#129529; Clear</button>
+            </div>
+            <pre id="scriptOut" class="hidden" style="background:#0d1117; padding:15px; border:1px solid var(--border); margin-top:15px; overflow-x:auto; white-space: pre-wrap;"></pre>
+        </div>
+    </div>
+
+    <div id="tab-monitor" class="hidden">
+        <h3>Statistics (Top Usage)</h3>
+        <div class="card">
+            <table id="statsTable"></table>
+        </div>
+    </div>
+
+    <div id="tab-users" class="hidden">
+        <h3>Access Management</h3>
+        <div class="card" style="display:flex; gap:10px;">
+            <input id="newU" placeholder="Username">
+            <input id="newP" placeholder="Password">
+            <select id="newRole"><option value="admin">Admin</option><option value="senior_admin">Senior</option></select>
+            <button onclick="createUser()" class="btn-primary" style="width:auto">Create</button>
+        </div>
+        <div class="card">
+            <table id="usersTable"></table>
+        </div>
+    </div>
+</div>
+
+<div id="loading" class="overlay">
+    <div style="text-align:center">
+        <div style="font-size:3em; margin-bottom:20px;">&#129302;</div>
+        <h3>AI is Thinking...</h3>
+        <p style="color:#8b949e">Please wait.</p>
+    </div>
+</div>
+
+<script>
+    let TOKEN = localStorage.getItem('qs_token');
+    let USER = localStorage.getItem('qs_user');
+    let ROLE = localStorage.getItem('qs_role');
+
+    if(TOKEN) initApp();
+
+    async function initApp() {
+        document.getElementById('loginOverlay').style.display = 'none';
+        try {
+            const me = await req('/users/me');
+            if(me && me.username) {
+                USER = me.username;
+                ROLE = me.role;
+                document.getElementById('displayUser').innerText = USER;
+                if(ROLE === 'senior_admin') {
+                    document.getElementById('admin-links').classList.remove('hidden');
+                }
+                if(me.force_change) {
+                    document.getElementById('forceChangeOverlay').style.display = 'flex';
+                }
+            } else {
+                console.log("Session invalid");
+            }
+        } catch(e) { console.error(e); }
+    }
+
+    async function req(url, method='GET', body=null) {
+        const headers = {'Authorization': `Bearer ${TOKEN}`};
+        if(body && !(body instanceof FormData)) {
+            headers['Content-Type'] = 'application/json';
+            body = JSON.stringify(body);
+        }
+        try {
+            const res = await fetch(url, {method, headers, body});
+            if(res.status === 401) logout();
+            return res.json();
+        } catch(e) { alert("Connection error"); return {}; }
+    }
+
+    async function login() {
+        const fd = new FormData();
+        fd.append('username', document.getElementById('loginUser').value);
+        fd.append('password', document.getElementById('loginPass').value);
+        try {
+            const res = await fetch('/token', {method:'POST', body:fd});
+            if(res.ok) {
+                const data = await res.json();
+                TOKEN = data.access_token; USER = fd.get('username'); ROLE = data.role;
+                localStorage.setItem('qs_token', TOKEN); localStorage.setItem('qs_user', USER); localStorage.setItem('qs_role', ROLE);
+                document.getElementById('loginOverlay').style.display = 'none';
+                initApp();
+            } else {
+                const err = await res.json();
+                document.getElementById('loginError').innerText = err.detail || "Invalid credentials";
+            }
+        } catch(e) { document.getElementById('loginError').innerText = "Server unavailable"; }
+    }
+
+    function logout() { localStorage.clear(); location.reload(); }
+
+    async function forceChangePwd() {
+        const oldP = document.getElementById('fcOld').value;
+        const newP = document.getElementById('fcNew').value;
+        const res = await req('/users/change-password', 'POST', {old_password: oldP, new_password: newP});
+        if(res.status === 'ok') { alert('Password updated! Please login again.'); logout(); }
+        else { alert(res.detail || "Password change failed"); }
+    }
+
+    async function userChangePwd() {
+        const oldP = document.getElementById('usrOldPass').value;
+        const newP = document.getElementById('usrNewPass').value;
+        const res = await req('/users/change-password', 'POST', {old_password: oldP, new_password: newP});
+        if(res.status === 'ok') { alert('Password changed'); closeModal('changePwdModal'); }
+        else { alert(res.detail || "Error"); }
+    }
+
+    async function adminResetPwd(username) {
+        const newTempPass = prompt(`Enter TEMPORARY password for user ${username}.\nThey will be required to change it upon login.`);
+        if(!newTempPass) return;
+        const res = await req(`/users/${username}/reset-password`, 'POST', {new_password: newTempPass});
+        if(res.status === 'ok') { alert(`Success! Password for ${username} reset.`); fetchUsers(); }
+        else { alert("Reset error: " + (res.detail || "Unknown error")); }
+    }
+
+    function parseMD(text) {
+        if(!text) return "";
+        let html = text.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/^### (.*$)/gim, '<h3>$1</h3>').replace(/^## (.*$)/gim, '<h2>$1</h2>')
+            .replace(/\*\*(.*)\*\*/gim, '<b>$1</b>').replace(/\*(.*)\*/gim, '<i>$1</i>')
+            .replace(/`([^`]+)`/gim, '<code>$1</code>').replace(/\n/g, '<br>');
+        html = html.replace(/```(\w+)?<br>([\s\S]*?)<br>```/gim, '<pre><code>$2</code></pre>');
+        return html;
+    }
+
+    function clearAnalyze() { document.getElementById('logInput').value = ''; document.getElementById('manualLogInput').value = ''; document.getElementById('resultsArea').innerHTML = ''; }
+    function clearScript() { document.getElementById('scriptTask').value = ''; document.getElementById('scriptOut').innerText = ''; document.getElementById('scriptOut').classList.add('hidden'); }
+
+    async function runAnalysis() {
+        document.getElementById('loading').style.display = 'flex';
+        try {
+            let data;
+            if(!document.getElementById('area-file').classList.contains('hidden')) {
+                const fd = new FormData();
+                const files = document.getElementById('logInput').files;
+                if(files.length === 0) { alert("Select a file!"); document.getElementById('loading').style.display='none'; return;}
+                for(let f of files) fd.append('files', f);
+                data = await req('/analyze-files', 'POST', fd);
+            } else {
+                const txt = document.getElementById('manualLogInput').value;
+                if(!txt) { alert("Enter text!"); document.getElementById('loading').style.display='none'; return;}
+                data = await req('/analyze', 'POST', {log_text: txt});
+            }
+            const resArea = document.getElementById('resultsArea');
+            resArea.innerHTML = '';
+            if(!data.results) throw new Error("Analysis error");
+            data.results.forEach(r => {
+                const div = document.createElement('div');
+                div.className = 'card';
+                div.innerHTML = `
+                    <div style="display:flex; justify-content:space-between">
+                        <h4>&#128196; ${r.filename} <span class="badge">${r.source}</span></h4>
+                        <span style="color:#8b949e">${new Date().toLocaleTimeString()}</span>
+                    </div>
+                    <div class="tabs">
+                        <button class="tab-btn active" onclick="switchSubTab(this, 'res-sol-${r.filename}')">&#128161; Solution</button>
+                        <button class="tab-btn" onclick="switchSubTab(this, 'res-ctx-${r.filename}')">&#128269; Context</button>
+                    </div>
+                    <div id="res-sol-${r.filename}" class="log-view">${parseMD(r.solution)}</div>
+                    <div id="res-ctx-${r.filename}" class="log-view hidden" style="font-size:0.85em; opacity:0.8">${r.original_context}</div>
+                `;
+                resArea.appendChild(div);
+            });
+        } catch(e) { alert(e); }
+        document.getElementById('loading').style.display = 'none';
+    }
+
+    async function genScript() {
+        document.getElementById('loading').style.display = 'flex';
+        try {
+            const res = await req('/generate-script', 'POST', {task: document.getElementById('scriptTask').value, language: document.getElementById('scriptLang').value});
+            const out = document.getElementById('scriptOut');
+            out.classList.remove('hidden'); out.style.display = 'block';
+            out.innerText = res.script;
+        } catch (e) { alert("Error: " + e); }
+        document.getElementById('loading').style.display = 'none';
+    }
+
+    function nav(id, el) {
+        document.querySelectorAll('.main > div').forEach(d => d.classList.add('hidden'));
+        document.getElementById('tab-' + id).classList.remove('hidden');
+        document.querySelectorAll('.nav-link').forEach(a => a.classList.remove('active'));
+        if(el) el.classList.add('active');
+        if(id === 'archive') fetchArchive();
+        if(id === 'users') fetchUsers();
+        if(id === 'monitor') fetchStats();
+    }
+    function setMode(m, btn) { document.getElementById('area-file').classList.toggle('hidden', m!=='file'); document.getElementById('area-text').classList.toggle('hidden', m!=='text'); btn.parentElement.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); }
+    function switchSubTab(btn, targetId) { const parent = btn.parentElement; parent.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); const target = document.getElementById(targetId); target.parentElement.querySelectorAll('.log-view').forEach(s => s.classList.add('hidden')); target.classList.remove('hidden'); }
+    function openModal(id) { document.getElementById(id).style.display = 'flex'; }
+    function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+    let cachedReports = [];
+    async function fetchArchive() {
+        const data = await req('/saved-reports');
+        cachedReports = data.reports;
+        const list = document.getElementById('archiveList'); list.innerHTML = '';
+        data.reports.forEach((r, idx) => {
+            const d = document.createElement('div'); d.className = 'card'; d.style.cursor = 'pointer';
+            d.innerHTML = `<div style="display:flex; justify-content:space-between"><strong>${r.filename}</strong><button class="btn-sm btn-danger" onclick="event.stopPropagation(); delRep(${r.id})">Del</button></div><div style="color:#8b949e; font-size:0.9em; margin-top:5px">${r.summary}</div>`;
+            d.onclick = (e) => { if(e.target.tagName!=='BUTTON') openReport(idx); };
+            list.appendChild(d);
+        });
+    }
+    function openReport(idx) { 
+        const r = cachedReports[idx]; 
+        document.getElementById('modTitle').innerText = r.filename; 
+        document.getElementById('mod-sol').innerHTML = parseMD(r.solution || 'No Solution'); 
+        // FIX: Используем правильный ключ original_context
+        document.getElementById('mod-ctx').innerText = r.original_context || 'No Context'; 
+        openModal('reportModal'); 
+    }
+    async function delRep(id) { if(confirm('Delete?')) { await req('/saved-reports/'+id, 'DELETE'); fetchArchive(); } }
+    async function fetchStats() { const data = await req('/admin/stats'); document.getElementById('statsTable').innerHTML = `<tr><th>User</th><th>Module</th><th>Uses</th><th>Last</th></tr>` + data.stats.map(s => `<tr><td>${s.user}</td><td><span class="badge">${s.module}</span></td><td>${s.count}</td><td>${s.last}</td></tr>`).join(''); }
+
+    async function fetchUsers() {
+        const data = await req('/users');
+        document.getElementById('usersTable').innerHTML = `<tr><th>User</th><th>Role</th><th>Status</th><th>Act</th></tr>` +
+        data.users.map(u => `
+            <tr>
+                <td>${u.username}</td>
+                <td>${u.role}</td>
+                <td>${u.is_locked?'&#128274;':'&#9989;'}</td>
+                <td>
+                    <button class="btn-sm btn-warning" onclick="adminResetPwd('${u.username}')" title="Reset Password">&#128273;</button>
+                    <button class="btn-sm" onclick="req('/users/${u.username}/${u.is_locked?'unblock':'block'}','POST');fetchUsers()">${u.is_locked?'Unblock':'Block'}</button>
+                    <button class="btn-sm btn-danger" onclick="req('/users/${u.username}','DELETE');fetchUsers()">Del</button>
+                </td>
+            </tr>`).join('');
+    }
+
+    async function createUser() { await req('/users/create', 'POST', {username:document.getElementById('newU').value, password:document.getElementById('newP').value, role:document.getElementById('newRole').value}); fetchUsers(); }
+</script>
+</body>
+</html>
