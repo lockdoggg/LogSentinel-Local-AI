@@ -1,4 +1,4 @@
-# QS Enterprise - AI Log Analyzer & Admin Tool
+# LogSentinel: Enterprise AI Log Analyzer
 
 **QS Enterprise** is a secure, self-hosted web application designed for System Administrators and SREs. It leverages AI (LLMs) to analyze server logs, detect critical errors, and generate remediation scripts, all while strictly prioritizing data privacy and security.
 
@@ -44,7 +44,7 @@
 
 1.  **Clone the repository** (or download the source files):
     ```bash
-    git clone [https://github.com/your-username/qs-enterprise.git](https://github.com/your-username/qs-enterprise.git)
+    git clone https://github.com/lockdoggg/LogSentinel-Local-AI.git
     cd qs-enterprise
     ```
 
