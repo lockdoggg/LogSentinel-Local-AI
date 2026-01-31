@@ -109,8 +109,3 @@ Open `main.py` and edit the **Configuration Section** (lines 35-43), or set Envi
 
 This tool is provided "as is". While it includes safety filters for generated scripts, **always review code and commands before executing them on production servers.** The authors are not responsible for any damage caused by the execution of AI-generated suggestions.
 
----
-
-## 📄 License
-
-[MIT License](LICENSE)
