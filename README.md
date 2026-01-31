@@ -45,7 +45,7 @@
 1.  **Clone the repository** (or download the source files):
     ```bash
     git clone https://github.com/lockdoggg/LogSentinel-Local-AI.git
-    cd qs-enterprise
+    cd LogSentinel-Local-AI
     ```
 
 2.  **Create a virtual environment (Recommended):**
