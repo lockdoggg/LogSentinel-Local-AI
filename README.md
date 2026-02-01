@@ -1,6 +1,5 @@
 ### 📺 [Watch the Live Demo](https://www.youtube.com/watch?v=mWN2Xe3-ipo)
 
-[![Demo Video](https://img.youtube.com/vi/ТУТ_ID_ВИДЕО/maxresdefault.jpg)](https://www.youtube.com/watch?v=ТУТ_ID_ВИДЕО)
 # LogSentinel: Enterprise AI Log Analyzer
 
 **QS Enterprise** is a secure, self-hosted web application designed for System Administrators and SREs. It leverages AI (LLMs) to analyze server logs, detect critical errors, and generate remediation scripts, all while strictly prioritizing data privacy and security.
