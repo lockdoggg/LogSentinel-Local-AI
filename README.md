@@ -1,7 +1,7 @@
 ## 📺 Watch the Live Demo
 [![Watch the video]([https://img.youtube.com/vi/VIDEO_ID/maxresdefault.jpg](https://youtu.be/mWN2Xe3-ipo))]
 
-*(Click the image to watch the demo on YouTube)*
+*(Click the URL to watch the demo on YouTube)*
 
 ---
 # 🛡️ LogSentinel: Local AI Log Analyzer (Dockerized)
