@@ -1,9 +1,7 @@
-qs_base.db
-last_analysis_debug.json
-knowledge_base.json
-*.db
-*.log
-venv/
 __pycache__/
-.env
+*.pyc
+*.db
 .DS_Store
+.env
+data/
+venv/

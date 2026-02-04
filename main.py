@@ -4,26 +4,28 @@ import sqlite3
 import json
 import asyncio
 import time
+import io
 import sys
 import logging
 import hashlib
 import traceback
+import secrets
 from collections import deque
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 import requests
-from jose import jwt
+from jose import jwt, JWTError
 from passlib.context import CryptContext
 
 # ==========================================
-# 1. CONFIGURATION
+# 1. CONFIGURATION & LOGGING
 # ==========================================
 
 logging.basicConfig(
@@ -31,37 +33,49 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)]
 )
-logger = logging.getLogger("QS_Core")
+logger = logging.getLogger("LogSentinel_Core")
 
-# SECURITY: Use environment variable or a default placeholder for GitHub
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "CHANGE_THIS_TO_A_COMPLEX_RANDOM_STRING")
+# SECURITY: Auto-generate secret if not provided in ENV
+SECRET_KEY = os.getenv("JWT_SECRET")
+if not SECRET_KEY or SECRET_KEY == "CHANGE_THIS_SECRET":
+    SECRET_KEY = secrets.token_urlsafe(32)
+    logger.warning("⚠️ No JWT_SECRET set in ENV. Generated a random ephemeral secret.")
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
-# CONFIG: URL for the AI Engine (Ollama/vLLM)
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://CHANGE_ME:11434/api/chat")
-MODEL_NAME = "qwen2.5-latest:latest" 
+# AI CONFIGURATION
+# Default to Docker's internal host gateway
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434/api/chat")
+MODEL_NAME = os.getenv("MODEL_NAME", "llama3") 
 
-DB_FILE = "qs_base.db"
-KB_FILE = "knowledge_base.json"
-SHAREABLE_DEBUG_FILE = "last_analysis_debug.json"
+# PATHS (MAPPED TO DOCKER VOLUME)
+DB_FILE = "/app/data/qs_base.db"
+SHAREABLE_DEBUG_FILE = "/app/data/last_analysis_debug.json"
+KB_FILE = "/app/data/knowledge_base.json" # <--- RESTORED
 
+# Ensure persistence directory exists
+os.makedirs("/app/data", exist_ok=True)
+
+# CACHE & PROTECTION
 MAX_CACHE_SIZE = 5000
 RESPONSE_CACHE: Dict[str, str] = {}
 BLOCKED_IPS: Dict[str, float] = {}
 BLOCK_DURATION = 1800 
 
-# Regex for detecting critical errors in logs
+# REGEX PATTERNS
 CRITICAL_REGEX = re.compile(r"error|fatal|fail|panic|alert|critical|exception|traceback|deadlock|killed|cannot|denied|refused|timeout|rejected|declined|unauthorized|unavailable|unreachable|warn|warning|\b500\b|\b502\b|\b503\b|\b504\b|\b403\b", re.IGNORECASE)
 NOISE_REGEX = re.compile(r"\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}|\[\d+\]")
 
+# SECURITY CONTEXTS
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-ANALYSIS_SEMAPHORE = asyncio.Semaphore(10)
+# CONCURRENCY CONTROL
+ANALYSIS_SEMAPHORE = asyncio.Semaphore(10) # Max 10 parallel AI requests
 SCRIPT_SEMAPHORE = asyncio.Semaphore(5)
 
-app = FastAPI(title="QS Enterprise", version="1.0.0-GitHub")
+app = FastAPI(title="LogSentinel Enterprise", version="1.0.0-Docker")
 
 app.add_middleware(
     CORSMiddleware,
@@ -72,11 +86,11 @@ app.add_middleware(
 )
 
 # ==========================================
-# 2. MASKING & PARSERS
+# 2. DATA MASKING & SANITIZATION
 # ==========================================
 
 def extract_ai_content(json_data: dict) -> str:
-    """Universal Parser (Ollama/OpenAI format compatible)"""
+    """Parses responses from both Ollama and OpenAI-compatible APIs"""
     try:
         if "choices" in json_data and isinstance(json_data["choices"], list):
             if len(json_data["choices"]) > 0:
@@ -91,28 +105,31 @@ def extract_ai_content(json_data: dict) -> str:
     return ""
 
 def mask_sensitive_data(text: str) -> str:
+    """Removes PII (IPs, Emails, Credit Cards, National IDs)"""
     if not text: return ""
     
-    # IP & Email
+    # Mask IPs
     text = re.sub(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', '[IP_HIDDEN]', text)
+    # Mask Emails
     text = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '[EMAIL_HIDDEN]', text)
     
-    # PAN (Payment Cards) - Aggressive Mode
+    # Mask Credit Cards (PAN)
     pan_pattern = r'(?<!\d)(?:\d{4}[-. ]?){3}\d{4}(?!\d)'
     text = re.sub(pan_pattern, '[CARD_HIDDEN]', text)
 
-    # IIN (National ID) - Date Validation + Merged
+    # Mask Kazakhstan IIN (National ID)
     iin_pattern = r'(?<!\d)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{6}(?!\d)'
     text = re.sub(iin_pattern, '[IIN_HIDDEN]', text)
     
     return text
 
 def sanitize_ai_response(text: str) -> str:
+    """Removes potentially destructive commands from AI output"""
     dangerous = [r"rm\s+-rf", r"mkfs", r"dd\s+if", r"chmod\s+777", r":\(\)\{ :\|:& \};:"]
     for pat in dangerous:
         if re.search(pat, text, re.IGNORECASE):
             text = re.sub(pat, "[BLOCKED]", text, flags=re.IGNORECASE)
-            text += "\n\n⚠️ **SECURITY WARNING:** Dangerous commands have been removed."
+            text += "\n\n⚠️ **SECURITY WARNING:** Malicious commands removed."
     return text
 
 def save_shareable_debug(source: str, prompt: str, response: str, duration: float, error: str = None, raw_body: str = None):
@@ -155,17 +172,17 @@ def detect_security_threat(text: str, ip: str) -> Optional[str]:
 
 def validate_script_safety(t: str):
     if any(b in t.lower() for b in ["rm -rf", "mkfs", ":(){:|:&};:"]): 
-        raise HTTPException(400, "Malicious content detected")
+        raise HTTPException(400, "Malicious content")
 
 def normalize_log_for_cache(text: str) -> str:
     clean = NOISE_REGEX.sub("", text[:10000]) 
     return hashlib.md5(clean.encode('utf-8')).hexdigest()
 
 def validate_password_complexity(p: str):
-    if len(p) < 8 or not re.search(r"\d", p): raise HTTPException(400, "Password too weak (min 8 chars + digit)")
+    if len(p) < 8 or not re.search(r"\d", p): raise HTTPException(400, "Weak password")
 
 # ==========================================
-# 3. DATABASE
+# 3. DATABASE MANAGEMENT
 # ==========================================
 
 def get_password_hash(p): return pwd_context.hash(p)
@@ -178,8 +195,10 @@ def init_db():
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, hashed_password TEXT, role TEXT, failed_attempts INTEGER DEFAULT 0, is_locked INTEGER DEFAULT 0, force_change INTEGER DEFAULT 1)''')
         c.execute('''CREATE TABLE IF NOT EXISTS saved_reports (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, filename TEXT, summary TEXT, solution TEXT, original_context TEXT, source TEXT, severity INTEGER, created_at TEXT, FOREIGN KEY(user_id) REFERENCES users(username))''')
+        # Stats table with LAST_USED column
         c.execute('''CREATE TABLE IF NOT EXISTS usage_stats (user_id TEXT, module TEXT, usage_count INTEGER DEFAULT 0, last_used TEXT, PRIMARY KEY(user_id, module))''')
         conn.commit()
+        # Create default admin if not exists
         c.execute("SELECT username FROM users WHERE username='admin'")
         if not c.fetchone(): 
             c.execute("INSERT INTO users VALUES (?, ?, ?, 0, 0, 1)", ("admin", get_password_hash("admin"), "senior_admin"))
@@ -189,32 +208,38 @@ def init_db():
 
 def update_stats(user: str, module: str):
     try:
-        ts = datetime.now().strftime("%Y-%m-%d")
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with sqlite3.connect(DB_FILE) as db:
             db.execute("INSERT OR IGNORE INTO usage_stats (user_id, module, usage_count, last_used) VALUES (?, ?, 0, ?)", (user, module, ts))
-            db.execute("UPDATE usage_stats SET usage_count = usage_count + 1 WHERE user_id = ? AND module = ?", (user, module))
+            db.execute("UPDATE usage_stats SET usage_count = usage_count + 1, last_used = ? WHERE user_id = ? AND module = ?", (ts, user, module))
     except: pass
 
 init_db()
 
 # ==========================================
-# 4. KNOWLEDGE BASE
+# 4. KNOWLEDGE BASE (RESTORED)
 # ==========================================
 
 KNOWLEDGE_BASE = []
+
+# Load KB if exists in volume
 if os.path.exists(KB_FILE):
     try:
-        with open(KB_FILE, "r", encoding="utf-8") as f: KNOWLEDGE_BASE = json.load(f)
-    except: pass
+        with open(KB_FILE, "r", encoding="utf-8") as f:
+            KNOWLEDGE_BASE = json.load(f)
+        logger.info(f"Loaded Knowledge Base: {len(KNOWLEDGE_BASE)} entries")
+    except Exception as e:
+        logger.error(f"Failed to load KB: {e}")
 
 def check_knowledge_base(text: str) -> Optional[Dict]:
     tl = text.lower()
     for r in KNOWLEDGE_BASE:
-        if any(tr in tl for tr in r.get("triggers", [])): return r["response"]
+        if any(tr in tl for tr in r.get("triggers", [])): 
+            return r["response"]
     return None
 
 # ==========================================
-# 5. AUTHENTICATION
+# 5. AUTHENTICATION & USERS
 # ==========================================
 
 class Token(BaseModel): access_token: str; token_type: str; force_change: bool; role: str
@@ -263,11 +288,11 @@ async def login(form: OAuth2PasswordRequestForm = Depends()):
 async def me(u: User = Depends(get_current_user)): return {"username": u.username, "role": u.role, "force_change": u.force_change}
 
 # ==========================================
-# 6. AI & PARSING ENGINE
+# 6. CORE LOGIC (STREAMING & AI)
 # ==========================================
 
 async def process_log_stream(file_obj) -> str:
-    """Stream Parser with Highlighting"""
+    """Reads file stream, highlights errors, and extracts context"""
     buffer = b""
     prev_lines = deque(maxlen=5)
     extracted = []
@@ -299,6 +324,7 @@ async def process_log_stream(file_obj) -> str:
     return "\n---\n".join(extracted) if extracted else "CLEAN_LOG_MARKER"
 
 def extract_smart_context_string(text: str) -> str:
+    """Extracts windows of text around errors from manual input"""
     lines = text.splitlines()
     extracted = []
     i = 0
@@ -312,7 +338,6 @@ def extract_smart_context_string(text: str) -> str:
             if len(extracted) > 15: break
         else:
             i += 1
-    # Fallback for manual input
     return "\n---\n".join(extracted) if extracted else "\n".join(lines[-20:])
 
 async def query_ollama_prod(context: str, raw_len: int) -> str:
@@ -321,15 +346,15 @@ async def query_ollama_prod(context: str, raw_len: int) -> str:
         save_shareable_debug("CACHE_HIT", context, RESPONSE_CACHE[cache_key], 0.001, raw_len)
         return RESPONSE_CACHE[cache_key]
 
-    # SYSTEM PROMPT IN ENGLISH
+    # ENGLISH PROMPT FOR GLOBAL USAGE
     sys_prompt = (
         "ROLE: Senior SRE. LANG: ENGLISH.\n"
         "TASK: Analyze log errors.\n"
         "IMPORTANT: Logs contain masked data ([IP_HIDDEN], [CARD_HIDDEN]). IGNORE them. Focus on errors.\n"
         "OUTPUT FORMAT:\n"
-        "1. ISSUE SUMMARY: (concise)\n"
+        "1. ROOT CAUSE: (briefly)\n"
         "2. ANALYSIS STEPS: (what to check)\n"
-        "3. RECOMMENDATIONS: (how to fix)"
+        "3. MITIGATION / FIX: (commands/actions)"
     )
     user_prompt = f"LOG:\n{context}\n\nREPORT (EN):"
     
@@ -359,7 +384,7 @@ async def query_ollama_prod(context: str, raw_len: int) -> str:
             resp = extract_ai_content(json_resp)
             if not resp:
                 save_shareable_debug("AI_EMPTY", user_prompt, "", duration, "Empty content", r.text)
-                return "Error: AI returned empty response."
+                return "Error: Could not read AI response."
 
             clean_resp = sanitize_ai_response(resp)
             if len(RESPONSE_CACHE) > MAX_CACHE_SIZE: RESPONSE_CACHE.pop(next(iter(RESPONSE_CACHE)))
@@ -399,7 +424,7 @@ async def stream_ollama_script(task: str, lang: str) -> str:
     except Exception as e: return f"// Error: {e}"
 
 # ==========================================
-# 7. ENDPOINTS
+# 7. API ENDPOINTS
 # ==========================================
 
 @app.post("/analyze")
@@ -450,7 +475,7 @@ async def gen(req: ScriptRequest, u: User = Depends(check_setup)):
     return {"script": await stream_ollama_script(req.task, req.language)}
 
 # ==========================================
-# 8. ADMIN & REPORTS
+# 8. ADMIN DASHBOARD & USER MANAGEMENT
 # ==========================================
 
 @app.get("/users")
@@ -473,17 +498,18 @@ async def ch_p(p: PasswordChange, u: User = Depends(get_current_user)):
 
 @app.get("/admin/stats")
 async def ast(u: User = Depends(get_current_user)):
-    with sqlite3.connect(DB_FILE) as db: return {"stats": [{"user":r[0],"module":r[1],"count":r[2]} for r in db.execute("SELECT user_id, module, usage_count FROM usage_stats").fetchall()]}
+    with sqlite3.connect(DB_FILE) as db: 
+        return {"stats": [{"user":r[0],"module":r[1],"count":r[2],"last":r[3]} for r in db.execute("SELECT user_id, module, usage_count, last_used FROM usage_stats ORDER BY last_used DESC").fetchall()]}
 
 @app.get("/saved-reports")
 async def reps(u: User = Depends(check_setup)):
     with sqlite3.connect(DB_FILE) as db:
         if u.role == "senior_admin":
             q = "SELECT id, filename, summary, solution, original_context, created_at, user_id FROM saved_reports ORDER BY id DESC LIMIT 100"
-            res = [{"id":r[0],"filename":r[1],"summary":r[2],"solution":r[3],"original_context":r[4],"date":r[5], "owner": r[6]} for r in db.execute(q).fetchall()]
+            res = [{"id":r[0],"filename":r[1],"summary":r[2],"solution":r[3],"context":r[4],"date":r[5], "owner": r[6]} for r in db.execute(q).fetchall()]
         else:
             q = "SELECT id, filename, summary, solution, original_context, created_at FROM saved_reports WHERE user_id=? ORDER BY id DESC LIMIT 50"
-            res = [{"id":r[0],"filename":r[1],"summary":r[2],"solution":r[3],"original_context":r[4],"date":r[5]} for r in db.execute(q, (u.username,)).fetchall()]
+            res = [{"id":r[0],"filename":r[1],"summary":r[2],"solution":r[3],"context":r[4],"date":r[5]} for r in db.execute(q, (u.username,)).fetchall()]
     return {"reports": res}
 
 @app.delete("/saved-reports/{rid}")
@@ -532,11 +558,14 @@ async def sys_stat():
 async def favicon(): return Response(status_code=204)
 
 @app.get("/")
-async def root(): 
-    # Force UTF-8 encoding to fix emoji issues on GitHub Pages/Raw view
-    return FileResponse("index.html", media_type="text/html; charset=utf-8")
+async def root(): return FileResponse("index.html") if os.path.exists("index.html") else "Backend OK"
 
 @app.on_event("startup")
 async def start():
-    try: requests.post(OLLAMA_URL, json={"model": MODEL_NAME, "keep_alive": -1}, timeout=2); logger.info("Ollama OK")
-    except: logger.warning("Ollama FAIL")
+    logger.info("Starting LogSentinel Enterprise...")
+    try: 
+        # Quick connectivity check
+        requests.post(OLLAMA_URL, json={"model": MODEL_NAME, "keep_alive": -1}, timeout=2)
+        logger.info(f"Ollama Connection OK: {OLLAMA_URL}")
+    except: 
+        logger.warning(f"Ollama unreachable at {OLLAMA_URL}. Check Docker config.")

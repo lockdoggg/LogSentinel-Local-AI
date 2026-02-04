@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>QS Enterprise | Offline Admin</title>
+    <title>LogSentinel Enterprise | Admin Console</title>
     <style>
         :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #c9d1d9; --blue: #58a6ff; --green: #238636; --red: #da3633; --yellow: #d29922; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; height: 100vh; overflow: hidden; }
@@ -47,7 +47,7 @@
 
 <div id="loginOverlay" class="overlay" style="display: flex; z-index: 9999;">
     <div class="modal-box" style="width: 350px; text-align: center;">
-        <h3 style="margin-bottom: 20px;">&#128274; Q-S LOGIN</h3>
+        <h3 style="margin-bottom: 20px;">&#128274; LOGSENTINEL LOGIN</h3>
         <input id="loginUser" placeholder="Username">
         <input type="password" id="loginPass" placeholder="Password">
         <button onclick="login()" class="btn-primary" style="margin-top: 10px;">LOGIN</button>
@@ -57,8 +57,8 @@
 
 <div id="forceChangeOverlay" class="overlay" style="z-index: 10000;">
     <div class="modal-box modal-force">
-        <h3 style="color: var(--red); text-align: center;">&#9888; PASSWORD CHANGE</h3>
-        <p style="text-align: center; color: #8b949e; margin-bottom: 20px;">Administrator requires a password change.</p>
+        <h3 style="color: var(--red); text-align: center;">&#9888; SECURITY ALERT</h3>
+        <p style="text-align: center; color: #8b949e; margin-bottom: 20px;">You must change your password upon first login.</p>
         <input type="password" id="fcOld" placeholder="Current (temporary) password">
         <input type="password" id="fcNew" placeholder="New password (min 8 chars + digit)">
         <button onclick="forceChangePwd()" class="btn-danger" style="margin-top: 10px;">UPDATE AND LOGIN</button>
@@ -84,7 +84,7 @@
             <button onclick="closeModal('reportModal')" class="btn-sm">&#10006;</button>
         </div>
         <div class="tabs">
-            <button class="tab-btn active" onclick="switchSubTab(this, 'mod-sol')">Solution</button>
+            <button class="tab-btn active" onclick="switchSubTab(this, 'mod-sol')">AI Analysis</button>
             <button class="tab-btn" onclick="switchSubTab(this, 'mod-ctx')">Log Context</button>
         </div>
         <div id="mod-sol" class="log-view" style="overflow-y:auto; flex:1"></div>
@@ -93,21 +93,24 @@
 </div>
 
 <div class="sidebar">
-    <h4 style="padding-left:10px">DISCLAIMER! <span style="color:#8b949e; font-size:0.6em">WARNING! VERIFY COMMANDS BEFORE EXECUTION! YOU ARE SOLELY RESPONSIBLE FOR ALL ACTIONS!</span></h4>
+    <h4 style="padding-left:10px">LOGSENTINEL <span style="color:#8b949e; font-size:0.6em">v1.0</span></h4>
+    <p style="font-size:0.7em; color:#8b949e; padding-left:10px; margin-bottom:20px;">
+        WARNING: You are responsible for executing generated commands.
+    </p>
     <nav style="flex:1">
-        <a class="nav-link active" onclick="nav('analyze', this)">&#128202; Analyze</a>
-        <a class="nav-link" onclick="nav('archive', this)">&#128452; Archive</a>
-        <a class="nav-link" onclick="nav('scripts', this)">&#128220; Scripts</a>
+        <a class="nav-link active" onclick="nav('analyze', this)">&#128202; Analyze Logs</a>
+        <a class="nav-link" onclick="nav('archive', this)">&#128452; Report Archive</a>
+        <a class="nav-link" onclick="nav('scripts', this)">&#128220; Script Gen</a>
         <div id="admin-links" class="hidden">
             <hr style="border-color:var(--border)">
-            <a class="nav-link" onclick="nav('monitor', this)">&#128200; Statistics</a>
-            <a class="nav-link" onclick="nav('users', this)">&#128101; Users</a>
+            <a class="nav-link" onclick="nav('monitor', this)">&#128200; Usage Stats</a>
+            <a class="nav-link" onclick="nav('users', this)">&#128101; User Mgmt</a>
         </div>
     </nav>
     <div style="border-top:1px solid var(--border); padding-top:15px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
             <strong id="displayUser">User</strong>
-            <button class="btn-sm" onclick="openModal('changePwdModal')">&#128273;</button>
+            <button class="btn-sm" onclick="openModal('changePwdModal')" title="Change Password">&#128273;</button>
         </div>
         <button onclick="logout()" style="width:100%; color:var(--red); border-color:var(--border)">Logout</button>
     </div>
@@ -124,10 +127,10 @@
                 <input type="file" id="logInput" multiple style="padding: 20px; border: 2px dashed var(--border);">
             </div>
             <div id="area-text" class="hidden">
-                <textarea id="manualLogInput" rows="8" placeholder="Paste log text here..."></textarea>
+                <textarea id="manualLogInput" rows="8" placeholder="Paste log text or stack trace here..."></textarea>
             </div>
             <div style="display: flex; gap: 10px; margin-top:15px;">
-                <button onclick="runAnalysis()" class="btn-primary" style="flex: 2;">START ANALYSIS (AI)</button>
+                <button onclick="runAnalysis()" class="btn-primary" style="flex: 2;">START AI ANALYSIS</button>
                 <button onclick="clearAnalyze()" class="btn-secondary" style="flex: 1;">&#129529; Clear</button>
             </div>
         </div>
@@ -136,7 +139,7 @@
 
     <div id="tab-archive" class="hidden">
         <div style="display:flex; justify-content:space-between; margin-bottom:15px">
-            <h3>Report Archive</h3>
+            <h3>Saved Reports</h3>
             <button onclick="fetchArchive()">&#128260; Refresh</button>
         </div>
         <div id="archiveList"></div>
@@ -145,14 +148,14 @@
     <div id="tab-scripts" class="hidden">
         <h3>Script Generator</h3>
         <div class="card">
-            <input id="scriptTask" placeholder="Describe the task (e.g., 'PostgreSQL backup script at 3 AM')">
+            <input id="scriptTask" placeholder="Describe the task (e.g., 'Backup PostgreSQL to S3 every night')">
             <select id="scriptLang">
                 <option value="bash">Bash / Shell</option>
                 <option value="sql">SQL Query</option>
                 <option value="python">Python 3</option>
             </select>
             <div style="display: flex; gap: 10px; margin-top: 10px;">
-                <button onclick="genScript()" class="btn-primary" style="flex: 2;">Generate</button>
+                <button onclick="genScript()" class="btn-primary" style="flex: 2;">Generate Code</button>
                 <button onclick="clearScript()" class="btn-secondary" style="flex: 1;">&#129529; Clear</button>
             </div>
             <pre id="scriptOut" class="hidden" style="background:#0d1117; padding:15px; border:1px solid var(--border); margin-top:15px; overflow-x:auto; white-space: pre-wrap;"></pre>
@@ -160,7 +163,7 @@
     </div>
 
     <div id="tab-monitor" class="hidden">
-        <h3>Statistics (Top Usage)</h3>
+        <h3>System Statistics</h3>
         <div class="card">
             <table id="statsTable"></table>
         </div>
@@ -172,7 +175,7 @@
             <input id="newU" placeholder="Username">
             <input id="newP" placeholder="Password">
             <select id="newRole"><option value="admin">Admin</option><option value="senior_admin">Senior</option></select>
-            <button onclick="createUser()" class="btn-primary" style="width:auto">Create</button>
+            <button onclick="createUser()" class="btn-primary" style="width:auto">Create User</button>
         </div>
         <div class="card">
             <table id="usersTable"></table>
@@ -183,8 +186,8 @@
 <div id="loading" class="overlay">
     <div style="text-align:center">
         <div style="font-size:3em; margin-bottom:20px;">&#129302;</div>
-        <h3>AI is Thinking...</h3>
-        <p style="color:#8b949e">Please wait.</p>
+        <h3>AI is Analyzing...</h3>
+        <p style="color:#8b949e">This runs locally. Please wait.</p>
     </div>
 </div>
 
@@ -225,7 +228,7 @@
             const res = await fetch(url, {method, headers, body});
             if(res.status === 401) logout();
             return res.json();
-        } catch(e) { alert("Connection error"); return {}; }
+        } catch(e) { alert("Connection error. Is the server running?"); return {}; }
     }
 
     async function login() {
@@ -309,7 +312,7 @@
                 div.className = 'card';
                 div.innerHTML = `
                     <div style="display:flex; justify-content:space-between">
-                        <h4>&#128196; ${r.filename} <span class="badge">${r.source}</span></h4>
+                        <h4>&#128196; ${r.filename} <span class="badge">${r.source || 'AI'}</span></h4>
                         <span style="color:#8b949e">${new Date().toLocaleTimeString()}</span>
                     </div>
                     <div class="tabs">
@@ -366,16 +369,15 @@
         const r = cachedReports[idx]; 
         document.getElementById('modTitle').innerText = r.filename; 
         document.getElementById('mod-sol').innerHTML = parseMD(r.solution || 'No Solution'); 
-        // FIX: Используем правильный ключ original_context
-        document.getElementById('mod-ctx').innerText = r.original_context || 'No Context'; 
+        document.getElementById('mod-ctx').innerText = r.original_context || r.context || 'No Context'; 
         openModal('reportModal'); 
     }
-    async function delRep(id) { if(confirm('Delete?')) { await req('/saved-reports/'+id, 'DELETE'); fetchArchive(); } }
+    async function delRep(id) { if(confirm('Delete report?')) { await req('/saved-reports/'+id, 'DELETE'); fetchArchive(); } }
     async function fetchStats() { const data = await req('/admin/stats'); document.getElementById('statsTable').innerHTML = `<tr><th>User</th><th>Module</th><th>Uses</th><th>Last</th></tr>` + data.stats.map(s => `<tr><td>${s.user}</td><td><span class="badge">${s.module}</span></td><td>${s.count}</td><td>${s.last}</td></tr>`).join(''); }
 
     async function fetchUsers() {
         const data = await req('/users');
-        document.getElementById('usersTable').innerHTML = `<tr><th>User</th><th>Role</th><th>Status</th><th>Act</th></tr>` +
+        document.getElementById('usersTable').innerHTML = `<tr><th>User</th><th>Role</th><th>Status</th><th>Action</th></tr>` +
         data.users.map(u => `
             <tr>
                 <td>${u.username}</td>

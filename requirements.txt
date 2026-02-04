@@ -1,6 +1,7 @@
 fastapi
 uvicorn
-python-multipart
 requests
-python-jose[cryptography]
-passlib[bcrypt]
+python-jose
+passlib
+bcrypt==4.0.1
+python-multipart
