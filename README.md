@@ -1,5 +1,5 @@
 ## 📺 Watch the Live Demo
-[![Watch the video]([https://img.youtube.com/vi/VIDEO_ID/maxresdefault.jpg](https://youtu.be/mWN2Xe3-ipo))]
+[![Watch the video]((https://youtu.be/mWN2Xe3-ipo))]
 
 *(Click the URL to watch the demo on YouTube)*
 
