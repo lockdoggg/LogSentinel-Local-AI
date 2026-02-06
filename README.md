@@ -37,6 +37,8 @@ ollama pull llama3
 Step 2: Clone & Launch
 ```bash
 git clone [https://github.com/lockdoggg/LogSentinel-Local-AI.git](https://github.com/lockdoggg/LogSentinel-Local-AI.git)
+```
+```bash
 cd LogSentinel-Local-AI
 ```
 # Build and start the container
