@@ -38,40 +38,40 @@ logger = logging.getLogger("LogSentinel_Core")
 # --- SMART AUTO-DISCOVERY START ---
 def autodiscover_ollama() -> str:
     """
-    Автоматически ищет Ollama.
-    Приоритет:
-    1. Переменная окружения (если задана вручную).
-    2. Внутренний контейнер (режим full-stack).
-    3. Хост машина (режим по умолчанию).
+    Automatically detects the optimal Ollama connection URL.
+    Priority:
+    1. Environment Variable (if manually set).
+    2. Internal Service (Full-Stack Docker mode).
+    3. Host Machine (Lite/Default mode).
     """
-    # 1. Если пользователь явно задал URL, верим ему
+    # 1. Trust user-defined env var if it differs from default
     env_url = os.getenv("OLLAMA_URL")
     if env_url and "host.docker.internal" not in env_url:
         logger.info(f"🔧 Configuration: Using custom OLLAMA_URL: {env_url}")
         return env_url
 
-    # 2. Пробуем найти соседа (внутренний контейнер)
+    # 2. Attempt to find internal container service
     internal_url = "http://ollama-service:11434/api/chat"
     try:
-        # Быстрый чек (timeout 0.5 сек)
+        # Fast check (0.5s timeout)
         requests.get(internal_url.replace("/api/chat", ""), timeout=0.5)
         logger.info("🐳 Discovery: Found internal 'ollama-service'. Using Full-Stack mode.")
         return internal_url
     except:
-        pass # Не нашли, идем дальше
+        pass # Not found, proceed to fallback
 
-    # 3. Если не нашли, используем хост
+    # 3. Fallback to Host Machine
     logger.info("💻 Discovery: Internal Ollama not found. Defaulting to Host Machine.")
     return "http://host.docker.internal:11434/api/chat"
 
-# Инициализируем URL при старте
+# Initialize URL on startup
 OLLAMA_URL = autodiscover_ollama()
 # --- SMART AUTO-DISCOVERY END ---
 
 SECRET_KEY = os.getenv("JWT_SECRET")
 if not SECRET_KEY or SECRET_KEY == "CHANGE_THIS_SECRET":
     SECRET_KEY = secrets.token_urlsafe(32)
-    logger.warning("⚠️ No JWT_SECRET set. Generated random.")
+    logger.warning("⚠️ No JWT_SECRET set. Generated random ephemeral secret.")
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
@@ -145,9 +145,9 @@ def mask_sensitive_data(text: str) -> str:
     pan_pattern = r'(?<!\d)(?:\d{4}[-. ]?){3}\d{4}(?!\d)'
     text = re.sub(pan_pattern, '[CARD_HIDDEN]', text)
 
-    # Mask Kazakhstan IIN (National ID)
+    # Mask Kazakhstan IIN (National ID) - Kept for local compliance support
     iin_pattern = r'(?<!\d)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{6}(?!\d)'
-    text = re.sub(iin_pattern, '[IIN_HIDDEN]', text)
+    text = re.sub(iin_pattern, '[ID_HIDDEN]', text)
     
     return text
 
@@ -223,14 +223,14 @@ def init_db():
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, hashed_password TEXT, role TEXT, failed_attempts INTEGER DEFAULT 0, is_locked INTEGER DEFAULT 0, force_change INTEGER DEFAULT 1)''')
         
-        # [UPDATED] Added log_hash column for persistent caching
+        # Check and migrate table for persistent caching
         try:
             c.execute('''CREATE TABLE IF NOT EXISTS saved_reports (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, filename TEXT, summary TEXT, solution TEXT, original_context TEXT, source TEXT, severity INTEGER, created_at TEXT, log_hash TEXT, FOREIGN KEY(user_id) REFERENCES users(username))''')
-            # Migration for existing databases
+            # Migration check
             try:
                 c.execute("ALTER TABLE saved_reports ADD COLUMN log_hash TEXT")
             except: 
-                pass # Column likely exists
+                pass # Column exists
         except Exception as e:
             logger.warning(f"DB Migration warning: {e}")
 
@@ -510,7 +510,7 @@ async def analyze(r: LogRequest, request: Request, u: User = Depends(check_setup
     
     ai_res = await query_ollama_prod(ctx_clean, len(r.log_text))
     
-    # [UPDATED] Save result + hash to DB for persistent caching
+    # Save result + hash to DB for persistent caching
     try:
         log_hash = normalize_log_for_cache(ctx_clean)
         with sqlite3.connect(DB_FILE) as db:
@@ -538,7 +538,7 @@ async def files_an(request: Request, files: List[UploadFile] = File(...), u: Use
         
         ai_res = await query_ollama_prod(ctx_clean, 0)
         
-        # [UPDATED] Save to DB
+        # Save to DB
         try:
             log_hash = normalize_log_for_cache(ctx_clean)
             with sqlite3.connect(DB_FILE) as db:
