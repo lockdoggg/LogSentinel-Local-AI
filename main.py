@@ -35,24 +35,52 @@ logging.basicConfig(
 )
 logger = logging.getLogger("LogSentinel_Core")
 
-# SECURITY: Auto-generate secret if not provided in ENV
+# --- SMART AUTO-DISCOVERY START ---
+def autodiscover_ollama() -> str:
+    """
+    Автоматически ищет Ollama.
+    Приоритет:
+    1. Переменная окружения (если задана вручную).
+    2. Внутренний контейнер (режим full-stack).
+    3. Хост машина (режим по умолчанию).
+    """
+    # 1. Если пользователь явно задал URL, верим ему
+    env_url = os.getenv("OLLAMA_URL")
+    if env_url and "host.docker.internal" not in env_url:
+        logger.info(f"🔧 Configuration: Using custom OLLAMA_URL: {env_url}")
+        return env_url
+
+    # 2. Пробуем найти соседа (внутренний контейнер)
+    internal_url = "http://ollama-service:11434/api/chat"
+    try:
+        # Быстрый чек (timeout 0.5 сек)
+        requests.get(internal_url.replace("/api/chat", ""), timeout=0.5)
+        logger.info("🐳 Discovery: Found internal 'ollama-service'. Using Full-Stack mode.")
+        return internal_url
+    except:
+        pass # Не нашли, идем дальше
+
+    # 3. Если не нашли, используем хост
+    logger.info("💻 Discovery: Internal Ollama not found. Defaulting to Host Machine.")
+    return "http://host.docker.internal:11434/api/chat"
+
+# Инициализируем URL при старте
+OLLAMA_URL = autodiscover_ollama()
+# --- SMART AUTO-DISCOVERY END ---
+
 SECRET_KEY = os.getenv("JWT_SECRET")
 if not SECRET_KEY or SECRET_KEY == "CHANGE_THIS_SECRET":
     SECRET_KEY = secrets.token_urlsafe(32)
-    logger.warning("⚠️ No JWT_SECRET set in ENV. Generated a random ephemeral secret.")
+    logger.warning("⚠️ No JWT_SECRET set. Generated random.")
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
-
-# AI CONFIGURATION
-# Default to Docker's internal host gateway
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434/api/chat")
-MODEL_NAME = os.getenv("MODEL_NAME", "llama3") 
+MODEL_NAME = os.getenv("MODEL_NAME", "llama3")
 
 # PATHS (MAPPED TO DOCKER VOLUME)
 DB_FILE = "/app/data/qs_base.db"
 SHAREABLE_DEBUG_FILE = "/app/data/last_analysis_debug.json"
-KB_FILE = "/app/data/knowledge_base.json" # <--- RESTORED
+KB_FILE = "/app/data/knowledge_base.json"
 
 # Ensure persistence directory exists
 os.makedirs("/app/data", exist_ok=True)
@@ -75,7 +103,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 ANALYSIS_SEMAPHORE = asyncio.Semaphore(10) # Max 10 parallel AI requests
 SCRIPT_SEMAPHORE = asyncio.Semaphore(5)
 
-app = FastAPI(title="LogSentinel Enterprise", version="1.0.0-Docker")
+app = FastAPI(title="LogSentinel Enterprise", version="1.3.0-Production")
 
 app.add_middleware(
     CORSMiddleware,
@@ -194,8 +222,18 @@ def init_db():
         conn.execute("PRAGMA journal_mode=WAL;")
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, hashed_password TEXT, role TEXT, failed_attempts INTEGER DEFAULT 0, is_locked INTEGER DEFAULT 0, force_change INTEGER DEFAULT 1)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS saved_reports (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, filename TEXT, summary TEXT, solution TEXT, original_context TEXT, source TEXT, severity INTEGER, created_at TEXT, FOREIGN KEY(user_id) REFERENCES users(username))''')
-        # Stats table with LAST_USED column
+        
+        # [UPDATED] Added log_hash column for persistent caching
+        try:
+            c.execute('''CREATE TABLE IF NOT EXISTS saved_reports (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, filename TEXT, summary TEXT, solution TEXT, original_context TEXT, source TEXT, severity INTEGER, created_at TEXT, log_hash TEXT, FOREIGN KEY(user_id) REFERENCES users(username))''')
+            # Migration for existing databases
+            try:
+                c.execute("ALTER TABLE saved_reports ADD COLUMN log_hash TEXT")
+            except: 
+                pass # Column likely exists
+        except Exception as e:
+            logger.warning(f"DB Migration warning: {e}")
+
         c.execute('''CREATE TABLE IF NOT EXISTS usage_stats (user_id TEXT, module TEXT, usage_count INTEGER DEFAULT 0, last_used TEXT, PRIMARY KEY(user_id, module))''')
         conn.commit()
         # Create default admin if not exists
@@ -217,12 +255,11 @@ def update_stats(user: str, module: str):
 init_db()
 
 # ==========================================
-# 4. KNOWLEDGE BASE (RESTORED)
+# 4. KNOWLEDGE BASE & PERSISTENT CACHE
 # ==========================================
 
 KNOWLEDGE_BASE = []
 
-# Load KB if exists in volume
 if os.path.exists(KB_FILE):
     try:
         with open(KB_FILE, "r", encoding="utf-8") as f:
@@ -236,6 +273,16 @@ def check_knowledge_base(text: str) -> Optional[Dict]:
     for r in KNOWLEDGE_BASE:
         if any(tr in tl for tr in r.get("triggers", [])): 
             return r["response"]
+    return None
+
+def check_db_cache(log_hash: str) -> Optional[str]:
+    """Retrieves solution from SQLite if RAM cache misses"""
+    try:
+        with sqlite3.connect(DB_FILE) as db:
+            # Get the most recent solution for this exact error hash
+            row = db.execute("SELECT solution FROM saved_reports WHERE log_hash=? ORDER BY id DESC LIMIT 1", (log_hash,)).fetchone()
+            if row: return row[0]
+    except: pass
     return None
 
 # ==========================================
@@ -341,22 +388,39 @@ def extract_smart_context_string(text: str) -> str:
     return "\n---\n".join(extracted) if extracted else "\n".join(lines[-20:])
 
 async def query_ollama_prod(context: str, raw_len: int) -> str:
+    # 1. Calculate Hash
     cache_key = normalize_log_for_cache(context)
+    
+    # 2. Check RAM Cache
     if cache_key in RESPONSE_CACHE:
-        save_shareable_debug("CACHE_HIT", context, RESPONSE_CACHE[cache_key], 0.001, raw_len)
+        save_shareable_debug("RAM_HIT", context, RESPONSE_CACHE[cache_key], 0.001, raw_len)
         return RESPONSE_CACHE[cache_key]
+    
+    # 3. Check DB Cache (Persistent)
+    db_hit = await run_in_threadpool(check_db_cache, cache_key)
+    if db_hit:
+        RESPONSE_CACHE[cache_key] = db_hit # Revive to RAM
+        save_shareable_debug("DB_HIT", context, db_hit, 0.005, raw_len)
+        return db_hit
 
-    # ENGLISH PROMPT FOR GLOBAL USAGE
+    # 4. AI Generation (US MARKET PROMPT)
     sys_prompt = (
-        "ROLE: Senior SRE. LANG: ENGLISH.\n"
-        "TASK: Analyze log errors.\n"
-        "IMPORTANT: Logs contain masked data ([IP_HIDDEN], [CARD_HIDDEN]). IGNORE them. Focus on errors.\n"
-        "OUTPUT FORMAT:\n"
-        "1. ROOT CAUSE: (briefly)\n"
-        "2. ANALYSIS STEPS: (what to check)\n"
-        "3. MITIGATION / FIX: (commands/actions)"
+        "YOU ARE: A Senior SRE at a top-tier tech company. Your tone is professional, direct, and highly technical.\n"
+        "TASK: Diagnose the root cause from the provided log snippet.\n"
+        "CONSTRAINTS:\n"
+        "1. DO NOT repeat the error message. The user already sees it.\n"
+        "2. IGNORE masked PII like [IP_HIDDEN] or [CARD_HIDDEN]. Treat them as valid infrastructure data.\n"
+        "3. PROVIDE actionable solutions only.\n"
+        "\n"
+        "OUTPUT FORMAT (Markdown):\n"
+        "### 🔴 Root Cause\n"
+        "(Explain exactly WHAT happened and WHY in 1-2 sentences)\n\n"
+        "### 🔍 Technical Analysis\n"
+        "(Explain the underlying system failure, e.g., permission issues, volume mounts, or network timeouts)\n\n"
+        "### 🛠️ Remediation\n"
+        "(Step-by-step fix with exact commands in code blocks)"
     )
-    user_prompt = f"LOG:\n{context}\n\nREPORT (EN):"
+    user_prompt = f"LOG DATA:\n{context}\n\nGENERATE SRE REPORT:"
     
     start_t = time.perf_counter()
     try:
@@ -367,7 +431,8 @@ async def query_ollama_prod(context: str, raw_len: int) -> str:
                     "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_prompt}],
                     "stream": False, 
                     "keep_alive": -1,
-                    "options": {"temperature": 0.1, "num_predict": 400}
+                    # OPTIONS OPTIMIZED FOR SRE TASK
+                    "options": {"temperature": 0.3, "num_predict": 600}
                 }, timeout=120)
             
             r = await run_in_threadpool(_req)
@@ -387,8 +452,11 @@ async def query_ollama_prod(context: str, raw_len: int) -> str:
                 return "Error: Could not read AI response."
 
             clean_resp = sanitize_ai_response(resp)
+            
+            # Save to RAM
             if len(RESPONSE_CACHE) > MAX_CACHE_SIZE: RESPONSE_CACHE.pop(next(iter(RESPONSE_CACHE)))
             RESPONSE_CACHE[cache_key] = clean_resp
+            
             save_shareable_debug("AI_OK", user_prompt, clean_resp, duration)
             return clean_resp
     except Exception as e:
@@ -396,7 +464,7 @@ async def query_ollama_prod(context: str, raw_len: int) -> str:
         return f"System Error: {e}"
 
 async def stream_ollama_script(task: str, lang: str) -> str:
-    sys_p = f"Role: Dev. Lang: {lang}. Comments: English. OUTPUT CODE ONLY."
+    sys_p = f"Role: Senior Dev. Lang: {lang}. Comments: English. OUTPUT CODE ONLY. No markdown wrapper."
     start_t = time.perf_counter()
     try:
         async with SCRIPT_SEMAPHORE:
@@ -405,7 +473,7 @@ async def stream_ollama_script(task: str, lang: str) -> str:
                     "model": MODEL_NAME, 
                     "messages": [{"role": "system", "content": sys_p}, {"role": "user", "content": task}],
                     "stream": False, 
-                    "options": {"temperature": 0.1, "num_predict": 4096} 
+                    "options": {"temperature": 0.2, "num_predict": 2048} 
                 }, timeout=180)
             r = await run_in_threadpool(_req)
             duration = time.perf_counter() - start_t
@@ -442,9 +510,14 @@ async def analyze(r: LogRequest, request: Request, u: User = Depends(check_setup
     
     ai_res = await query_ollama_prod(ctx_clean, len(r.log_text))
     
-    with sqlite3.connect(DB_FILE) as db:
-         db.execute("INSERT INTO saved_reports (user_id, filename, summary, solution, original_context, source, severity, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", 
-                    (u.username, "Input", ai_res[:100], ai_res, ctx_clean, "AI", 50, datetime.now().strftime("%Y-%m-%d %H:%M")))
+    # [UPDATED] Save result + hash to DB for persistent caching
+    try:
+        log_hash = normalize_log_for_cache(ctx_clean)
+        with sqlite3.connect(DB_FILE) as db:
+             db.execute("INSERT INTO saved_reports (user_id, filename, summary, solution, original_context, source, severity, created_at, log_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+                        (u.username, "Input", ai_res[:100], ai_res, ctx_clean, "AI", 50, datetime.now().strftime("%Y-%m-%d %H:%M"), log_hash))
+    except Exception as e:
+        logger.error(f"DB Save Error: {e}")
     
     return {"results": [{"filename": "Input", "status": "ok", "solution": ai_res, "original_context": ctx_clean, "source": "AI"}]}
 
@@ -464,6 +537,14 @@ async def files_an(request: Request, files: List[UploadFile] = File(...), u: Use
         if kb := check_knowledge_base(ctx): res.append({"filename": f.filename, "status": "ok", "solution": f"KB: {kb['summary']}", "original_context": ctx_clean}); continue
         
         ai_res = await query_ollama_prod(ctx_clean, 0)
+        
+        # [UPDATED] Save to DB
+        try:
+            log_hash = normalize_log_for_cache(ctx_clean)
+            with sqlite3.connect(DB_FILE) as db:
+                db.execute("INSERT INTO saved_reports (user_id, filename, summary, solution, original_context, source, severity, created_at, log_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+                        (u.username, f.filename, ai_res[:100], ai_res, ctx_clean, "AI", 50, datetime.now().strftime("%Y-%m-%d %H:%M"), log_hash))
+        except: pass
         
         res.append({"filename": f.filename, "status": "ok", "solution": ai_res, "original_context": ctx_clean})
     return {"results": res}
@@ -563,9 +644,9 @@ async def root(): return FileResponse("index.html") if os.path.exists("index.htm
 @app.on_event("startup")
 async def start():
     logger.info("Starting LogSentinel Enterprise...")
+    logger.info(f"Target AI URL: {OLLAMA_URL}")
     try: 
-        # Quick connectivity check
         requests.post(OLLAMA_URL, json={"model": MODEL_NAME, "keep_alive": -1}, timeout=2)
-        logger.info(f"Ollama Connection OK: {OLLAMA_URL}")
+        logger.info(f"✅ Ollama Connection Verified")
     except: 
-        logger.warning(f"Ollama unreachable at {OLLAMA_URL}. Check Docker config.")
+        logger.warning(f"⚠️ Ollama unreachable at startup. It might still be loading.")
