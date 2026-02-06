@@ -35,12 +35,14 @@ Open your terminal and pull a model (we recommend Llama 3 or Qwen 2.5):
 ollama pull llama3
 ```
 Step 2: Clone & Launch
+```bash
 git clone [https://github.com/lockdoggg/LogSentinel-Local-AI.git](https://github.com/lockdoggg/LogSentinel-Local-AI.git)
 cd LogSentinel-Local-AI
-
+```
 # Build and start the container
+```bash
 docker-compose up -d --build
-
+```
 Step 3: Access Dashboard
 
     Open your browser at http://localhost:8000.
