@@ -1,39 +1,88 @@
-## 📺 Watch the Live Demo
-https://youtu.be/mWN2Xe3-ipo
-
-*(Click the URL to watch the demo on YouTube)*
-
----
 # 🛡️ LogSentinel: Local AI Log Analyzer (Dockerized)
 
-![License](https://img.shields.io/badge/license-MIT-green)
-![Python](https://img.shields.io/badge/python-3.9-blue)
-![Docker](https://img.shields.io/badge/docker-ready-blue)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.9-blue)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/docker-ready-blue)](https://www.docker.com/)
+[![Ollama](https://img.shields.io/badge/AI-Ollama-black)](https://ollama.com/)
 ![Status](https://img.shields.io/badge/status-production--ready-orange)
 
-**LogSentinel** is a secure, self-hosted web application for System Administrators and SREs. It allows you to analyze server logs using **Local LLMs** (like Llama 3 via Ollama) without sending sensitive data to the cloud.
+### 📺 [Watch the Live Demo (YouTube)](https://youtu.be/mWN2Xe3-ipo)
+
+**LogSentinel** is a secure, self-hosted web application for System Administrators and SREs. It leverages **Local LLMs** (via Ollama) to analyze server logs, diagnose errors, and suggest fixes—all without sending sensitive data to the cloud.
 
 > **Privacy First:** All analysis happens locally. PII (IPs, Emails, Credit Cards) is masked *before* processing.
 
 ---
 
-## 🚀 Key Features
+## 🏗️ Architecture
 
-* **🐳 Docker Ready:** Deploy in seconds with `docker-compose`.
-* **🔒 Smart Data Masking:** Automatically redacts IPs, Emails, Credit Cards (PAN), and National IDs.
-* **⚡ Async & Resilient:** Built on FastAPI with semaphore concurrency control to prevent server overload.
-* **📝 Actionable Reports:** AI provides Root Cause, Analysis Steps, and Fixes.
-* **🔐 Enterprise Security:** JWT Auth, Role-Based Access Control (RBAC), and Audit Logs.
+LogSentinel runs inside Docker and connects securely to your Host machine's Ollama instance via `host.docker.internal`.
 
----
+```mermaid
+graph TD
+    User[👨‍💻 SysAdmin] -->|Browser| UI[Web Dashboard :8000]
+    subgraph "Docker Container"
+        UI -->|API| FastAPI[FastAPI Backend]
+        FastAPI -->|1. Masking| PII[PII Redactor]
+        PII -->|2. Cache Check| DB[(SQLite DB)]
+    end
+    PII -->|3. Inference| Ollama[🦙 Ollama (Host Machine)]
+    Ollama -->|4. Report| FastAPI
+🚀 Key Features
 
-## 🛠️ Quick Start (Docker) - Recommended
+    🐳 Docker Native: Uses standard docker-compose. Zero config required.
 
-### Prerequisites
-1.  **[Ollama](https://ollama.com)** installed and running.
-2.  **Docker Desktop** installed.
+    🔒 Privacy First: Automatically masks IPs, Emails, Credit Cards, and National IDs before analysis.
 
-### 1. Run Ollama
-Ensure you have a model (e.g., Llama 3) pulled:
-```bash
-ollama run llama3
+    ⚡ Persistent Memory: Caches analysis results in SQLite. Repeated errors are solved instantly.
+
+    🔐 Enterprise Security: JWT Authentication, RBAC (Admin/Senior), and Audit Logs.
+
+🛠️ Installation & Setup
+Prerequisites
+
+    Ollama installed and running.
+
+    Docker Desktop (Mac/Windows) installed.
+
+Step 1: Prepare AI Model
+
+Ensure you have a model downloaded in Ollama (on your host machine).
+Bash
+
+ollama pull llama3
+# OR
+ollama pull qwen2.5-coder:1.5b
+
+Step 2: Clone & Launch
+Bash
+
+git clone [https://github.com/lockdoggg/LogSentinel-Local-AI.git](https://github.com/lockdoggg/LogSentinel-Local-AI.git)
+cd LogSentinel-Local-AI
+
+# Build and start the container
+docker-compose up -d --build
+
+Step 3: Access Dashboard
+
+    Open http://localhost:8000.
+
+    Login with default credentials:
+
+        Username: admin
+
+        Password: admin (Change on first login)
+
+⚙️ Configuration
+
+You can customize the AI connection in docker-compose.yml:
+Variable	Default	Description
+OLLAMA_URL	http://host.docker.internal:11434/api/chat	Connects to Ollama on host.
+MODEL_NAME	llama3	The model used for analysis.
+JWT_SECRET	(Auto-generated)	Set a fixed string for persistent sessions.
+🤝 Contributing
+
+Pull requests are welcome!
+📄 License
+
+MIT
