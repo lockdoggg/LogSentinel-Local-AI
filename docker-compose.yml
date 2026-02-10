@@ -7,24 +7,15 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/data  # Persist database and logs
+      - .:/app
+      - ./data:/app/data
     environment:
-      # === AI CONFIGURATION ===
-      # For Mac/Windows, use: [http://host.docker.internal:11434/api/chat](http://host.docker.internal:11434/api/chat)
-      # For Linux, use: [http://172.17.0.1:11434/api/chat](http://172.17.0.1:11434/api/chat)
-      - OLLAMA_URL=[http://host.docker.internal:11434/api/chat](http://host.docker.internal:11434/api/chat)
+      - OLLAMA_URL=http://host.docker.internal:11434
       
-      # The model must be pulled in Ollama (e.g., 'ollama pull llama3')
-      - MODEL_NAME=llama3
+      - MODEL_NAME=
       
-      # === SYSTEM ===
-      # Change this to your timezone (e.g., America/New_York, Europe/Berlin)
-      - TZ=UTC
-      
-      # === SECURITY ===
-      # Leave empty to auto-generate a random secret on every restart.
-      # Set a fixed string for persistent sessions across restarts.
-      # - JWT_SECRET=my_production_secret_key
+      - TZ=Asia/Almaty
+      - JWT_SECRET=CHANGE_THIS_SECRET
     extra_hosts:
-      - "host.docker.internal:host-gateway" # Required for Linux to access host services
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped

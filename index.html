@@ -35,8 +35,10 @@
         .modal-force { width: 500px; border: 1px solid var(--red); box-shadow: 0 0 30px rgba(218, 54, 51, 0.3); }
         .log-view { font-family: monospace; white-space: pre-wrap; line-height: 1.5; color: #e6edf3; }
         .log-view h2 { font-size: 1.2em; color: var(--blue); border-bottom: 1px solid var(--border); padding-bottom: 5px; margin-top: 15px; }
+        .log-view h3 { font-size: 1.1em; color: var(--text); margin-top: 10px; }
         .log-view code { background: rgba(110,118,129,0.4); padding: 2px 5px; border-radius: 4px; }
-        .log-view pre { background: #0d1117; padding: 10px; border-radius: 6px; border: 1px solid var(--border); overflow-x: auto; }
+        .log-view pre { background: #0d1117; padding: 10px; border-radius: 6px; border: 1px solid var(--border); overflow-x: auto; margin: 10px 0; }
+        .log-view pre code { background: transparent; padding: 0; border-radius: 0; }
         .hidden { display: none !important; }
         .badge { background: #1f6feb; padding: 2px 8px; border-radius: 12px; font-size: 0.75em; margin-left: 10px; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
@@ -60,7 +62,7 @@
         <h3 style="color: var(--red); text-align: center;">&#9888; SECURITY ALERT</h3>
         <p style="text-align: center; color: #8b949e; margin-bottom: 20px;">You must change your password upon first login.</p>
         <input type="password" id="fcOld" placeholder="Current (temporary) password">
-        <input type="password" id="fcNew" placeholder="New password (min 8 chars + digit)">
+        <input type="password" id="fcNew" placeholder="New password">
         <button onclick="forceChangePwd()" class="btn-danger" style="margin-top: 10px;">UPDATE AND LOGIN</button>
     </div>
 </div>
@@ -277,12 +279,34 @@
     }
 
     function parseMD(text) {
-        if(!text) return "";
-        let html = text.replace(/</g, '&lt;').replace(/>/g, '&gt;')
-            .replace(/^### (.*$)/gim, '<h3>$1</h3>').replace(/^## (.*$)/gim, '<h2>$1</h2>')
-            .replace(/\*\*(.*)\*\*/gim, '<b>$1</b>').replace(/\*(.*)\*/gim, '<i>$1</i>')
-            .replace(/`([^`]+)`/gim, '<code>$1</code>').replace(/\n/g, '<br>');
-        html = html.replace(/```(\w+)?<br>([\s\S]*?)<br>```/gim, '<pre><code>$2</code></pre>');
+        if (!text) return "";
+        
+        // 1. Сначала защищаем блоки кода, заменяя их на временные метки
+        const codeBlocks = [];
+        // Ловит ```lang ... ```
+        let html = text.replace(/```(\w+)?\n([\s\S]*?)```/g, (match, lang, code) => {
+            codeBlocks.push(`<pre><code class="language-${lang || ''}">${code.trim()}</code></pre>`);
+            return `__CODE_BLOCK_${codeBlocks.length - 1}__`;
+        });
+
+        // 2. Экранируем HTML в обычном тексте (чтобы <br> не ломали верстку, а теги не исполнялись)
+        html = html.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        // 3. Инлайн-код `code`
+        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+        // 4. Форматирование Markdown заголовков и стиля
+        html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>')
+                   .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+                   .replace(/\*\*(.*)\*\*/gim, '<b>$1</b>')
+                   .replace(/\*(.*)\*/gim, '<i>$1</i>');
+
+        // 5. Переносы строк превращаем в <br>
+        html = html.replace(/\n/g, '<br>');
+
+        // 6. Возвращаем блоки кода на место
+        html = html.replace(/__CODE_BLOCK_(\d+)__/g, (match, index) => codeBlocks[index]);
+
         return html;
     }
 
