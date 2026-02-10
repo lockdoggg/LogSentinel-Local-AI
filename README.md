@@ -55,6 +55,8 @@ Step 3: Access Dashboard
 
         Password: admin (You will be forced to change this on first login)
 
+<img width="1630" height="974" alt="Снимок экрана 2026-02-10 в 11 45 55" src="https://github.com/user-attachments/assets/f7b0a538-d856-481a-9df4-f1467d45431e" />
+
 ⚙️ Configuration
 
 You can customize the connection settings in docker-compose.yml:
